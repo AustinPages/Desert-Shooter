@@ -1,0 +1,243 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
+<title>Desert Shooter - Starter</title>
+<style>
+  :root{--bg:#cfa97a;--hud:#222;}
+  body{margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg);display:flex;align-items:center;justify-content:center;height:100vh;}
+  #container{width:900px;max-width:100%;background:#1a1a1a;padding:10px;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);position:relative;overflow:hidden;}
+  canvas{display:block;background:#cfa97a;width:100%;height:auto;border-radius:4px;}
+  #ui{position:absolute;left:12px;top:12px;color:#fff;font-weight:bold;}
+  .btn{background:#fff;padding:10px 14px;border-radius:6px;margin:6px;cursor:pointer;display:inline-block;}
+  #home{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,0.6),rgba(0,0,0,0.8));display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;z-index:10;}
+  .big{font-size:28px;margin-bottom:10px;}
+  #touchControls{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:8px;z-index:9}
+  .trow{display:flex;gap:8px}
+  .touchbtn{width:64px;height:64px;border-radius:10px;background:rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;user-select:none;touch-action:none;}
+  #scoreboard{position:absolute;right:12px;top:12px;color:#fff;font-weight:bold;z-index:8;}
+</style>
+</head>
+<body>
+<div id="container">
+  <canvas id="game" width="900" height="600"></canvas>
+
+  <div id="home">
+    <div class="big">Desert Shooter</div>
+    <div style="margin-bottom:12px">Top-down shooter starter using Kenney assets (placeholders included).</div>
+    <div>
+      <button class="btn" id="startBtn">Start Game</button>
+      <button class="btn" id="howBtn">How to Play</button>
+      <button class="btn" id="assetsBtn">Open Assets Page</button>
+    </div>
+    <div style="margin-top:14px;font-size:12px;opacity:0.8">Place real sprites in the sprites/ folder to replace placeholders.</div>
+  </div>
+
+  <div id="ui"><span id="levelText">Level 1</span></div>
+  <div id="scoreboard">Score: <span id="score">0</span> Lives: <span id="lives">3</span></div>
+
+  <div id="touchControls">
+    <div class="trow">
+      <div class="touchbtn" id="leftBtn">◀</div>
+      <div class="touchbtn" id="rightBtn">▶</div>
+      <div class="touchbtn" id="shootBtn">●</div>
+    </div>
+    <div class="trow">
+      <div class="touchbtn" id="upBtn">▲</div>
+      <div class="touchbtn" id="downBtn">▼</div>
+      <div class="touchbtn" id="respawnBtn">⟲</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* Desert Shooter - main game JS
+ - Home screen
+ - Touch controls
+ - Scoreboard
+ - AI bots (simple) and bullets
+ - WebAudio-generated sounds
+*/
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const SPR = {
+  player: 'sprites/player.png',
+  enemy: 'sprites/enemy1.png',
+  bullet: 'sprites/bullet.png',
+  tile: 'sprites/tile_sand.png',
+  explosion: 'sprites/explosion.png',
+  cross: 'sprites/hudCrosshair.png',
+  powerup: 'sprites/powerup.png',
+  flag: 'sprites/flag.png'
+};
+
+let images = {};
+let loaded = 0;
+const toLoad = Object.keys(SPR).length;
+for (let k in SPR){
+  images[k] = new Image();
+  images[k].src = SPR[k];
+  images[k].onload = () => { if (++loaded === toLoad) console.log('images loaded'); };
+  images[k].onerror = ()=> {};
+}
+
+let running = false;
+let score = 0;
+let lives = 3;
+let level = 1;
+
+const player = { x: W/2-16, y: H-80, w:32, h:32, speed:4, vx:0, vy:0, fireCooldown:0 };
+let enemies = [];
+let bullets = [];
+let enemyBullets = [];
+let powers = [];
+
+const keys = {};
+document.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+document.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+function addTouchHold(el, keyName) {
+  el.addEventListener('touchstart', e => { e.preventDefault(); keys[keyName] = true;});
+  el.addEventListener('touchend', e => { e.preventDefault(); keys[keyName] = false;});
+  el.addEventListener('mousedown', e => { e.preventDefault(); keys[keyName] = true;});
+  el.addEventListener('mouseup', e => { e.preventDefault(); keys[keyName] = false;});
+}
+addTouchHold(leftBtn, 'arrowleft');
+addTouchHold(rightBtn, 'arrowright');
+addTouchHold(upBtn, 'arrowup');
+addTouchHold(downBtn, 'arrowdown');
+addTouchHold(shootBtn, ' ');
+respawnBtn.addEventListener('click', () => respawn());
+
+const home = document.getElementById('home');
+document.getElementById('startBtn').addEventListener('click', ()=> { home.style.display = 'none'; startGame(); });
+document.getElementById('howBtn').addEventListener('click', ()=> alert('Move with arrow keys / A D or use touch buttons. Tap SHOOT to fire.'));
+document.getElementById('assetsBtn').addEventListener('click', ()=> window.open('https://kenney.nl/assets/desert-shooter-pack', '_blank'));
+
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function beep(freq=600, type='sine', time=0.06, vol=0.2){
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.value = vol;
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + time);
+}
+function explosionSound(){
+  beep(120, 'sawtooth', 0.12, 0.25);
+  setTimeout(()=>beep(220,'square',0.08,0.18),30);
+}
+
+function spawnEnemy(x,y){
+  enemies.push({ x:x||Math.random()*(W-48)+24, y:y||-40, w:32, h:32, speed:1+Math.random()*1.8, hp:1+Math.floor(level/2), fireTimer:Math.random()*120 });
+}
+
+function startGame(){
+  running = true;
+  enemies = []; bullets = []; enemyBullets = []; powers = [];
+  score = 0; lives = 3; level = 1;
+  document.getElementById('score').textContent = score;
+  document.getElementById('lives').textContent = lives;
+  for (let i=0;i<4+level;i++) spawnEnemy();
+  loop();
+}
+function respawn(){ player.x = W/2-16; player.y = H-80; }
+
+function collide(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+
+let frame = 0;
+function loop(){
+  if (!running) return;
+  update(); draw();
+  frame++;
+  requestAnimationFrame(loop);
+}
+
+function update(){
+  player.vx = player.vy = 0;
+  if (keys['arrowleft'] || keys['a']) player.vx = -player.speed;
+  if (keys['arrowright'] || keys['d']) player.vx = player.speed;
+  if (keys['arrowup'] || keys['w']) player.vy = -player.speed;
+  if (keys['arrowdown'] || keys['s']) player.vy = player.speed;
+  player.x += player.vx; player.y += player.vy;
+  player.x = Math.max(0, Math.min(W-player.w, player.x));
+  player.y = Math.max(0, Math.min(H-player.h, player.y));
+
+  if ((keys[' '] || keys['k']) && player.fireCooldown <= 0){
+    bullets.push({ x: player.x+player.w/2-4, y: player.y-8, w:8, h:16, dy:-6 });
+    player.fireCooldown = 12; beep(1000,'sine',0.06,0.12);
+  }
+  if (player.fireCooldown > 0) player.fireCooldown--;
+
+  for (let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i]; b.y += b.dy;
+    if (b.y + b.h < 0) bullets.splice(i,1);
+  }
+
+  for (let i=enemies.length-1;i>=0;i--){
+    const e = enemies[i];
+    if (player.x + player.w/2 < e.x + e.w/2) e.x -= 0.4; else e.x += 0.4;
+    e.y += e.speed; e.fireTimer--;
+    if (e.fireTimer <= 0){
+      const ang = Math.atan2(player.y - e.y, player.x - e.x);
+      enemyBullets.push({ x:e.x+e.w/2-4, y:e.y+e.h/2-4, vx:Math.cos(ang)*3, vy:Math.sin(ang)*3, w:8, h:8 });
+      e.fireTimer = 80+Math.random()*120;
+    }
+    if (e.y > H+40){ enemies.splice(i,1); spawnEnemy(); }
+  }
+
+  for (let i=enemyBullets.length-1;i>=0;i--){
+    const b = enemyBullets[i];
+    b.x += b.vx; b.y += b.vy;
+    if (b.x<-20||b.x>W+20||b.y<-20||b.y>H+20) enemyBullets.splice(i,1);
+    else if (collide(b, player)){
+      enemyBullets.splice(i,1);
+      lives--; document.getElementById('lives').textContent=lives;
+      explosionSound();
+      if (lives<=0){ running=false; setTimeout(()=>{alert('Game Over! Score: '+score); location.reload();},50);}
+      else respawn();
+    }
+  }
+
+  for (let i=enemies.length-1;i>=0;i--){
+    for (let j=bullets.length-1;j>=0;j--){
+      if (collide(enemies[i], bullets[j])){
+        bullets.splice(j,1); enemies[i].hp--;
+        if (enemies[i].hp<=0){
+          explosionSound(); enemies.splice(i,1);
+          score+=100; document.getElementById('score').textContent=score;
+          spawnEnemy();
+        }
+        break;
+      }
+    }
+  }
+
+  if (score >= level*1000){
+    level++; document.getElementById('levelText').textContent='Level '+level;
+    for (let i=0;i<2+level;i++) spawnEnemy();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  if (images.tile && images.tile.complete){
+    const ts=32;
+    for (let y=0;y<H;y+=ts){for (let x=0;x<W;x+=ts){ctx.drawImage(images.tile,x,y,ts,ts);}}
+  } else { ctx.fillStyle='#cfa97a'; ctx.fillRect(0,0,W,H); }
+
+  if (images.player && images.player.complete) ctx.drawImage(images.player, player.x, player.y, player.w, player.h);
+  else { ctx.fillStyle='blue'; ctx.fillRect(player.x,player.y,player.w,player.h); }
+
+  bullets.forEach(b=> images.bullet?ctx.drawImage(images.bullet,b.x,b.y,b.w,b.h):ctx.fillRect(b.x,b.y,b.w,b.h));
+  enemies.forEach(e=> images.enemy?ctx.drawImage(images.enemy,e.x,e.y,e.w,e.h):ctx.fillRect(e.x,e.y,e.w,e.h));
+  enemyBullets.forEach(b=>{ctx.fillStyle='black';ctx.fillRect(b.x,b.y,b.w,b.h);});
+}
+setInterval(()=>{ if (running && enemies.length < 6+level) spawnEnemy(); },2000);
+</script>
+</body>
+</html>
